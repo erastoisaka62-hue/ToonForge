@@ -1,20 +1,124 @@
-
 /**
  * ToonForge — Base Engine
  *
- * Provides the common lifecycle and execution contract
- * for all production engines in ToonForge.
- *
- * Every engine should extend EngineBase and implement
- * its own process() method.
+ * Defines the shared lifecycle contract for every production engine.
+ * Engines should extend EngineBase and implement process().
  */
+
+import { engineEvents } from "./engine-events.js";
 
 export const ENGINE_STATES = Object.freeze({
   IDLE: "idle",
   RUNNING: "running",
   COMPLETED: "completed",
   FAILED: "failed",
+  CANCELLED: "cancelled",
 });
+
+const LIFECYCLE_EVENTS = Object.freeze({
+  STARTED: "engine:started",
+  COMPLETED: "engine:completed",
+  FAILED: "engine:failed",
+  CANCELLED: "engine:cancelled",
+});
+
+function requireNonEmptyString(value, label) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new TypeError(`${label} must be a non-empty string.`);
+  }
+
+  return value.trim();
+}
+
+function getContextExecutionId(context) {
+  return typeof context?.executionId === "string"
+    ? context.executionId
+    : null;
+}
+
+function isContextAborted(context) {
+  return (
+    context?.isAborted === true ||
+    context?.signal?.aborted === true
+  );
+}
+
+function throwIfAborted(context, engineId) {
+  if (typeof context?.throwIfAborted === "function") {
+    context.throwIfAborted();
+    return;
+  }
+
+  if (!isContextAborted(context)) {
+    return;
+  }
+
+  const reason = context?.signal?.reason;
+
+  const message = reason instanceof Error
+    ? reason.message
+    : typeof reason === "string" && reason.trim().length > 0
+      ? reason
+      : "Execution was cancelled.";
+
+  throw new EngineError(message, {
+    code: "EXECUTION_ABORTED",
+    engineId,
+    details: { reason: message },
+    ...(reason instanceof Error ? { cause: reason } : {}),
+  });
+}
+
+function publishLifecycleEvent(eventName, payload) {
+  // Lifecycle notifications must not break production work.
+  try {
+    return engineEvents.emit(eventName, payload);
+  } catch (error) {
+    return {
+      event: null,
+      delivered: 0,
+      errors: [{ error }],
+    };
+  }
+}
+
+function normalizeExecutionError(error, engineId, context) {
+  let normalized = error instanceof EngineError
+    ? error
+    : new EngineError(
+        error instanceof Error ? error.message : String(error),
+        {
+          code: "ENGINE_EXECUTION_FAILED",
+          engineId,
+          cause: error,
+        }
+      );
+
+  if (normalized.engineId === null) {
+    normalized = new EngineError(normalized.message, {
+      code: normalized.code,
+      engineId,
+      details: normalized.details,
+      cause: normalized,
+    });
+  }
+
+  if (
+    isContextAborted(context) &&
+    normalized.code !== "EXECUTION_ABORTED"
+  ) {
+    normalized = new EngineError("Execution was cancelled.", {
+      code: "EXECUTION_ABORTED",
+      engineId,
+      details: {
+        originalError: normalized.message,
+      },
+      cause: normalized,
+    });
+  }
+
+  return normalized;
+}
 
 /**
  * Standard error type used by ToonForge engines.
@@ -44,18 +148,26 @@ export class EngineBase {
     version = "0.1.0",
     description = "",
   } = {}) {
-    if (typeof id !== "string" || !id.trim()) {
-      throw new TypeError("Engine ID is required.");
+    this.id = requireNonEmptyString(id, "Engine ID");
+    this.name = requireNonEmptyString(name, "Engine name");
+
+    if (
+      typeof version !== "string" ||
+      version.trim().length === 0
+    ) {
+      throw new TypeError(
+        "Engine version must be a non-empty string."
+      );
     }
 
-    if (typeof name !== "string" || !name.trim()) {
-      throw new TypeError("Engine name is required.");
+    if (typeof description !== "string") {
+      throw new TypeError(
+        "Engine description must be a string."
+      );
     }
 
-    this.id = id;
-    this.name = name;
-    this.version = version;
-    this.description = description;
+    this.version = version.trim();
+    this.description = description.trim();
 
     this._status = ENGINE_STATES.IDLE;
     this._lastRun = null;
@@ -69,12 +181,19 @@ export class EngineBase {
   }
 
   /**
-   * Returns information about the last execution.
+   * Returns a snapshot of the last execution.
    */
   get lastRun() {
-    return this._lastRun
-      ? { ...this._lastRun }
-      : null;
+    if (!this._lastRun) {
+      return null;
+    }
+
+    return {
+      ...this._lastRun,
+      ...(this._lastRun.error
+        ? { error: { ...this._lastRun.error } }
+        : {}),
+    };
   }
 
   /**
@@ -91,8 +210,7 @@ export class EngineBase {
   }
 
   /**
-   * Validates incoming data.
-   * Individual engines can override this method.
+   * Override this method to validate engine-specific input.
    */
   validate(input, context = {}) {
     return {
@@ -102,8 +220,7 @@ export class EngineBase {
   }
 
   /**
-   * Performs the actual engine operation.
-   * Every production engine must implement this method.
+   * Every concrete production engine must implement process().
    */
   async process(input, context = {}) {
     throw new EngineError(
@@ -116,7 +233,7 @@ export class EngineBase {
   }
 
   /**
-   * Runs the engine using a standard execution lifecycle.
+   * Executes validation and processing under the shared lifecycle.
    */
   async run(input, context = {}) {
     if (this._status === ENGINE_STATES.RUNNING) {
@@ -131,12 +248,33 @@ export class EngineBase {
 
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
+    const executionId = getContextExecutionId(context);
 
     this._status = ENGINE_STATES.RUNNING;
 
+    this._lastRun = {
+      status: ENGINE_STATES.RUNNING,
+      startedAt,
+      completedAt: null,
+      durationMs: 0,
+    };
+
+    publishLifecycleEvent(LIFECYCLE_EVENTS.STARTED, {
+      engineId: this.id,
+      engineName: this.name,
+      engineVersion: this.version,
+      executionId,
+      startedAt,
+    });
+
     try {
-      // Validate the incoming input.
+      // Check cancellation before validation.
+      throwIfAborted(context, this.id);
+
       const validation = await this.validate(input, context);
+
+      // Check again in case validation took a long time.
+      throwIfAborted(context, this.id);
 
       if (
         !validation ||
@@ -157,13 +295,18 @@ export class EngineBase {
           {
             code: "INPUT_VALIDATION_FAILED",
             engineId: this.id,
-            details: validation.errors ?? [],
+            details: Array.isArray(validation.errors)
+              ? validation.errors
+              : [],
           }
         );
       }
 
-      // Execute the engine's actual operation.
+      // Execute the actual engine operation.
       const output = await this.process(input, context);
+
+      // Never report success after cancellation.
+      throwIfAborted(context, this.id);
 
       const completedAtMs = Date.now();
       const completedAt = new Date(completedAtMs).toISOString();
@@ -171,7 +314,10 @@ export class EngineBase {
       const metadata = {
         startedAt,
         completedAt,
-        durationMs: completedAtMs - startedAtMs,
+        durationMs: Math.max(
+          0,
+          completedAtMs - startedAtMs
+        ),
       };
 
       this._status = ENGINE_STATES.COMPLETED;
@@ -180,6 +326,14 @@ export class EngineBase {
         status: ENGINE_STATES.COMPLETED,
         ...metadata,
       };
+
+      publishLifecycleEvent(LIFECYCLE_EVENTS.COMPLETED, {
+        engineId: this.id,
+        engineName: this.name,
+        engineVersion: this.version,
+        executionId,
+        ...metadata,
+      });
 
       return {
         engineId: this.id,
@@ -192,32 +346,55 @@ export class EngineBase {
       const completedAtMs = Date.now();
       const completedAt = new Date(completedAtMs).toISOString();
 
-      const engineError =
-        error instanceof EngineError
-          ? error
-          : new EngineError(
-              error instanceof Error
-                ? error.message
-                : String(error),
-              {
-                code: "ENGINE_EXECUTION_FAILED",
-                engineId: this.id,
-                cause: error,
-              }
-            );
+      const engineError = normalizeExecutionError(
+        error,
+        this.id,
+        context
+      );
 
-      this._status = ENGINE_STATES.FAILED;
+      const cancelled =
+        engineError.code === "EXECUTION_ABORTED";
 
-      this._lastRun = {
-        status: ENGINE_STATES.FAILED,
+      const finalStatus = cancelled
+        ? ENGINE_STATES.CANCELLED
+        : ENGINE_STATES.FAILED;
+
+      const metadata = {
         startedAt,
         completedAt,
-        durationMs: completedAtMs - startedAtMs,
+        durationMs: Math.max(
+          0,
+          completedAtMs - startedAtMs
+        ),
+      };
+
+      this._status = finalStatus;
+
+      this._lastRun = {
+        status: finalStatus,
+        ...metadata,
         error: {
           code: engineError.code,
           message: engineError.message,
         },
       };
+
+      publishLifecycleEvent(
+        cancelled
+          ? LIFECYCLE_EVENTS.CANCELLED
+          : LIFECYCLE_EVENTS.FAILED,
+        {
+          engineId: this.id,
+          engineName: this.name,
+          engineVersion: this.version,
+          executionId,
+          ...metadata,
+          error: {
+            code: engineError.code,
+            message: engineError.message,
+          },
+        }
+      );
 
       throw engineError;
     }
@@ -242,4 +419,4 @@ export class EngineBase {
 
     return this.getInfo();
   }
-}
+  }
