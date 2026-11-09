@@ -1,0 +1,15 @@
+
+{
+  "name": "toonforge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A modular creative studio for building stylized 3D cartoon films and animations.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "check": "node --check src/core/engine-base.js && node --check src/core/engine-registry.js && node --check src/core/engine-context.js && node --check src/core/engine-validator.js && node --check src/core/engine-orchestrator.js && node --check src/core/engine-events.js",
+    "test": "node --test"
+  }
+}
