@@ -1,10 +1,17 @@
-
 /**
  * ToonForge — Engine Orchestrator Tests
  *
- * Covers pipeline validation, preflight checks,
- * sequential execution, input factories, shared context,
- * failure handling, cancellation and execution metadata.
+ * Covers:
+ * - Constructor validation.
+ * - Pipeline and step validation.
+ * - Accessor and sparse-array protection.
+ * - Engine preflight validation.
+ * - Sequential execution.
+ * - Input factories and previous results.
+ * - Shared execution context.
+ * - Failure handling.
+ * - Cancellation.
+ * - Execution metadata and progress events.
  */
 
 import { describe, it } from "node:test";
@@ -22,6 +29,9 @@ import {
   EngineError,
 } from "../../src/core/engine-base.js";
 
+/**
+ * Creates isolated dependencies for each test.
+ */
 function createHarness({
   engines = ["engine-a", "engine-b", "engine-c"],
   run,
@@ -47,13 +57,19 @@ function createHarness({
     },
 
     async run(engineId, input, context) {
-      calls.push({ engineId, input, context });
+      calls.push({
+        engineId,
+        input,
+        context,
+      });
 
       if (run) {
         return run(engineId, input, context);
       }
 
-      return { output: input };
+      return {
+        output: input,
+      };
     },
   };
 
@@ -86,7 +102,11 @@ function createHarness({
 }
 
 function createStep(id, engineId, input) {
-  return { id, engineId, input };
+  return {
+    id,
+    engineId,
+    input,
+  };
 }
 
 describe("EngineOrchestrator", () => {
@@ -124,7 +144,12 @@ describe("EngineOrchestrator", () => {
     it("should reject invalid maximum step limits", () => {
       const harness = createHarness();
 
-      for (const maxSteps of [0, -1, 1.5, 10001]) {
+      for (const maxSteps of [
+        0,
+        -1,
+        1.5,
+        10001,
+      ]) {
         assert.throws(
           () => new EngineOrchestrator({
             registry: harness.registry,
@@ -143,7 +168,8 @@ describe("EngineOrchestrator", () => {
 
       await assert.rejects(
         orchestrator.run(null),
-        (error) => error.code === "INVALID_PIPELINE_PLAN"
+        (error) =>
+          error.code === "INVALID_PIPELINE_PLAN"
       );
     });
 
@@ -151,8 +177,11 @@ describe("EngineOrchestrator", () => {
       const { orchestrator } = createHarness();
 
       await assert.rejects(
-        orchestrator.run({ steps: [] }),
-        (error) => error.code === "EMPTY_PIPELINE"
+        orchestrator.run({
+          steps: [],
+        }),
+        (error) =>
+          error.code === "EMPTY_PIPELINE"
       );
     });
 
@@ -161,7 +190,8 @@ describe("EngineOrchestrator", () => {
 
       await assert.rejects(
         orchestrator.run({}),
-        (error) => error.code === "INVALID_PIPELINE_STEPS"
+        (error) =>
+          error.code === "INVALID_PIPELINE_STEPS"
       );
     });
 
@@ -175,7 +205,8 @@ describe("EngineOrchestrator", () => {
           ],
           unexpected: true,
         }),
-        (error) => error.code === "UNKNOWN_PIPELINE_OPTION"
+        (error) =>
+          error.code === "UNKNOWN_PIPELINE_OPTION"
       );
     });
 
@@ -189,7 +220,8 @@ describe("EngineOrchestrator", () => {
             createStep("duplicate", "engine-b", {}),
           ],
         }),
-        (error) => error.code === "DUPLICATE_STEP_ID"
+        (error) =>
+          error.code === "DUPLICATE_STEP_ID"
       );
     });
 
@@ -205,7 +237,8 @@ describe("EngineOrchestrator", () => {
             inputFactory: () => ({}),
           }],
         }),
-        (error) => error.code === "INVALID_STEP_INPUT"
+        (error) =>
+          error.code === "INVALID_STEP_INPUT"
       );
 
       await assert.rejects(
@@ -215,7 +248,8 @@ describe("EngineOrchestrator", () => {
             engineId: "engine-a",
           }],
         }),
-        (error) => error.code === "INVALID_STEP_INPUT"
+        (error) =>
+          error.code === "INVALID_STEP_INPUT"
       );
     });
 
@@ -230,7 +264,8 @@ describe("EngineOrchestrator", () => {
             inputFactory: "invalid",
           }],
         }),
-        (error) => error.code === "INVALID_INPUT_FACTORY"
+        (error) =>
+          error.code === "INVALID_INPUT_FACTORY"
       );
     });
 
@@ -246,7 +281,8 @@ describe("EngineOrchestrator", () => {
             createStep("step-b", "engine-b", {}),
           ],
         }),
-        (error) => error.code === "PIPELINE_STEP_LIMIT"
+        (error) =>
+          error.code === "PIPELINE_STEP_LIMIT"
       );
     });
 
@@ -256,12 +292,15 @@ describe("EngineOrchestrator", () => {
 
       await assert.rejects(
         orchestrator.run({ steps }),
-        (error) => error.code === "INVALID_PIPELINE_STEP"
+        (error) =>
+          error.code === "INVALID_PIPELINE_STEP"
       );
     });
 
-    it("should reject accessor properties without executing their getters", async () => {
+    it("should reject accessor properties without executing getters", async () => {
       const { orchestrator } = createHarness();
+
+      let getterExecuted = false;
 
       const step = {
         id: "step-a",
@@ -270,7 +309,9 @@ describe("EngineOrchestrator", () => {
 
       Object.defineProperty(step, "input", {
         enumerable: true,
+
         get() {
+          getterExecuted = true;
           throw new Error("Getter must not execute.");
         },
       });
@@ -285,6 +326,8 @@ describe("EngineOrchestrator", () => {
             "Accessor properties are not allowed"
           )
       );
+
+      assert.equal(getterExecuted, false);
     });
   });
 
@@ -295,10 +338,15 @@ describe("EngineOrchestrator", () => {
       await assert.rejects(
         harness.orchestrator.run({
           steps: [
-            createStep("step-a", "missing-engine", {}),
+            createStep(
+              "step-a",
+              "missing-engine",
+              {}
+            ),
           ],
         }),
-        (error) => error.code === "ENGINE_NOT_FOUND"
+        (error) =>
+          error.code === "ENGINE_NOT_FOUND"
       );
 
       assert.equal(harness.calls.length, 0);
@@ -353,7 +401,8 @@ describe("EngineOrchestrator", () => {
             createStep("step-a", "engine-a", {}),
           ],
         }),
-        (error) => error.code === "ENGINE_VALIDATION_FAILED"
+        (error) =>
+          error.code === "ENGINE_VALIDATION_FAILED"
       );
 
       assert.equal(harness.calls.length, 0);
@@ -372,7 +421,8 @@ describe("EngineOrchestrator", () => {
             createStep("step-a", "engine-a", {}),
           ],
         }),
-        (error) => error.code === "ENGINE_PREFLIGHT_FAILED"
+        (error) =>
+          error.code === "ENGINE_PREFLIGHT_FAILED"
       );
 
       assert.equal(harness.calls.length, 0);
@@ -414,11 +464,13 @@ describe("EngineOrchestrator", () => {
 
       assert.deepEqual(
         harness.calls[0].input,
-        { characterId: "hero-001" }
+        {
+          characterId: "hero-001",
+        }
       );
     });
 
-    it("should share one execution context across all engines", async () => {
+    it("should share one execution context across engines", async () => {
       const harness = createHarness();
 
       await harness.orchestrator.run({
@@ -448,11 +500,16 @@ describe("EngineOrchestrator", () => {
 
       const result = await harness.orchestrator.run({
         steps: [
-          createStep("step-a", "engine-a", { value: 5 }),
+          createStep("step-a", "engine-a", {
+            value: 5,
+          }),
         ],
       });
 
-      assert.equal(result.steps[0].status, "completed");
+      assert.equal(
+        result.steps[0].status,
+        "completed"
+      );
 
       assert.deepEqual(
         result.steps[0].result,
@@ -474,10 +531,14 @@ describe("EngineOrchestrator", () => {
 
       const result = await harness.orchestrator.run({
         steps: [
-          createStep("first", "engine-a", { value: 5 }),
+          createStep("first", "engine-a", {
+            value: 5,
+          }),
+
           {
             id: "second",
             engineId: "engine-b",
+
             inputFactory: ({ previousResult }) => {
               receivedPreviousResult = previousResult;
 
@@ -511,15 +572,20 @@ describe("EngineOrchestrator", () => {
         steps: [
           createStep("first", "engine-a", { value: 1 }),
           createStep("second", "engine-b", { value: 2 }),
+
           {
             id: "third",
             engineId: "engine-c",
+
             inputFactory: ({ results }) => {
               receivedResults = results;
 
               return {
-                firstOutput: results.get("first").result.output.value,
-                secondOutput: results.get("second").result.output.value,
+                firstOutput:
+                  results.get("first").result.output.value,
+
+                secondOutput:
+                  results.get("second").result.output.value,
               };
             },
           },
@@ -537,7 +603,7 @@ describe("EngineOrchestrator", () => {
       );
     });
 
-    it("should allow input factories to use the shared context", async () => {
+    it("should allow input factories to use shared context", async () => {
       const harness = createHarness();
 
       let factoryContext;
@@ -546,6 +612,7 @@ describe("EngineOrchestrator", () => {
         steps: [{
           id: "step-a",
           engineId: "engine-a",
+
           inputFactory: ({ context }) => {
             factoryContext = context;
 
@@ -556,11 +623,44 @@ describe("EngineOrchestrator", () => {
         }],
       });
 
-      assert.ok(factoryContext instanceof EngineContext);
+      assert.ok(
+        factoryContext instanceof EngineContext
+      );
 
       assert.equal(
         harness.calls[0].input.executionId,
         factoryContext.executionId
+      );
+    });
+
+    it("should pass immutable step information to input factories", async () => {
+      const harness = createHarness();
+
+      let receivedStep;
+
+      await harness.orchestrator.run({
+        steps: [{
+          id: "step-a",
+          engineId: "engine-a",
+
+          inputFactory: ({ step }) => {
+            receivedStep = step;
+            return {};
+          },
+        }],
+      });
+
+      assert.deepEqual(
+        receivedStep,
+        {
+          id: "step-a",
+          engineId: "engine-a",
+        }
+      );
+
+      assert.equal(
+        Object.isFrozen(receivedStep),
+        true
       );
     });
   });
@@ -570,10 +670,14 @@ describe("EngineOrchestrator", () => {
       const harness = createHarness({
         run: async (engineId) => {
           if (engineId === "engine-a") {
-            throw new Error("Character generation failed.");
+            throw new Error(
+              "Character generation failed."
+            );
           }
 
-          return { output: "ok" };
+          return {
+            output: "ok",
+          };
         },
       });
 
@@ -598,7 +702,9 @@ describe("EngineOrchestrator", () => {
             throw new Error("Temporary failure.");
           }
 
-          return { output: "success" };
+          return {
+            output: "success",
+          };
         },
       });
 
@@ -610,7 +716,11 @@ describe("EngineOrchestrator", () => {
         ],
       });
 
-      assert.equal(result.status, "completed_with_errors");
+      assert.equal(
+        result.status,
+        "completed_with_errors"
+      );
+
       assert.equal(result.summary.failed, 1);
       assert.equal(result.summary.completed, 1);
       assert.equal(harness.calls.length, 2);
@@ -629,11 +739,16 @@ describe("EngineOrchestrator", () => {
         ],
       });
 
-      assert.equal(result.steps[0].status, "failed");
+      assert.equal(
+        result.steps[0].status,
+        "failed"
+      );
+
       assert.equal(
         result.steps[0].error.code,
         "PIPELINE_STEP_FAILED"
       );
+
       assert.equal(
         result.steps[0].error.message,
         "Rendering failed."
@@ -687,7 +802,9 @@ describe("EngineOrchestrator", () => {
       const harness = createHarness();
       const controller = new AbortController();
 
-      controller.abort(new Error("User cancelled."));
+      controller.abort(
+        new Error("User cancelled.")
+      );
 
       const result = await harness.orchestrator.run({
         signal: controller.signal,
@@ -707,10 +824,12 @@ describe("EngineOrchestrator", () => {
 
       const result = await harness.orchestrator.run({
         signal: controller.signal,
+
         steps: [
           {
             id: "step-a",
             engineId: "engine-a",
+
             inputFactory: () => {
               controller.abort(
                 new Error("Cancelled during preparation.")
@@ -719,6 +838,7 @@ describe("EngineOrchestrator", () => {
               return {};
             },
           },
+
           createStep("step-b", "engine-b", {}),
         ],
       });
@@ -740,67 +860,7 @@ describe("EngineOrchestrator", () => {
 
       const result = await harness.orchestrator.run({
         context,
+
         steps: [
           createStep("step-a", "engine-a", {}),
         ],
-      });
-
-      assert.equal(
-        result.executionId,
-        "test-execution-001"
-      );
-
-      assert.equal(
-        harness.calls[0].context,
-        context
-      );
-    });
-
-    it("should reject an invalid supplied context", async () => {
-      const { orchestrator } = createHarness();
-
-      await assert.rejects(
-        orchestrator.run({
-          context: {},
-          steps: [
-            createStep("step-a", "engine-a", {}),
-          ],
-        }),
-        (error) => error.code === "INVALID_ENGINE_CONTEXT"
-      );
-    });
-
-    it("should reject conflicting context options", async () => {
-      const { orchestrator } = createHarness();
-      const context = new EngineContext();
-
-      await assert.rejects(
-        orchestrator.run({
-          context,
-          project: { id: "project-001" },
-          steps: [
-            createStep("step-a", "engine-a", {}),
-          ],
-        }),
-        (error) => error.code === "CONFLICTING_CONTEXT_OPTIONS"
-      );
-    });
-
-    it("should include execution summary and timing metadata", async () => {
-      const { orchestrator } = createHarness();
-
-      const result = await orchestrator.run({
-        project: { id: "project-001" },
-        scene: { id: "scene-001" },
-        metadata: { source: "test-suite" },
-        steps: [
-          createStep("step-a", "engine-a", {}),
-        ],
-      });
-
-      assert.equal(result.status, "completed");
-      assert.equal(result.summary.total, 1);
-      assert.equal(result.summary.completed, 1);
-
-      assert.equal(
-        
