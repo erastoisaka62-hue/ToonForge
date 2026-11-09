@@ -9,7 +9,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "check": "node --check src/core/engine-base.js && node --check src/core/engine-registry.js && node --check src/core/engine-context.js && node --check src/core/engine-validator.js && node --check src/core/engine-orchestrator.js && node --check src/core/engine-events.js",
+    "check": "node --check src/core/engine-base.js && node --check src/core/engine-registry.js && node --check src/core/engine-context.js && node --check src/core/engine-validator.js && node --check src/core/engine-orchestrator.js && node --check src/core/engine-events.js && node --check src/core/engine-config.js",
     "test": "node --test"
   }
 }
