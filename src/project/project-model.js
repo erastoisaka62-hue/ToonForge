@@ -231,7 +231,6 @@ function assertSafeData(
 
 function cloneData(value) {
   assertSafeData(value);
-
   return JSON.parse(JSON.stringify(value));
 }
 
@@ -488,6 +487,20 @@ export function createProject(options = {}) {
     );
   }
 
+  // Validate all nested options before reading or merging them.
+  assertSafeData(options, "options");
+
+  if (
+    Object.prototype.hasOwnProperty.call(options, "settings") &&
+    !isPlainObject(options.settings)
+  ) {
+    throw createProjectError(
+      "INVALID_SETTINGS",
+      "Project settings must be a plain object",
+      "options.settings"
+    );
+  }
+
   const allowedOptions = new Set([
     "id",
     "name",
@@ -507,25 +520,6 @@ export function createProject(options = {}) {
         "UNKNOWN_OPTION",
         "Unknown project creation option",
         `options.${String(key)}`
-      );
-    }
-
-    const descriptor = Object.getOwnPropertyDescriptor(
-      options,
-      key
-    );
-
-    if (
-      !descriptor ||
-      !Object.prototype.hasOwnProperty.call(
-        descriptor,
-        "value"
-      )
-    ) {
-      throw createProjectError(
-        "ACCESSOR_NOT_ALLOWED",
-        "Accessor properties are not allowed",
-        `options.${key}`
       );
     }
   }
@@ -604,7 +598,7 @@ export function deserializeProject(json) {
 
   try {
     project = JSON.parse(json);
-  } catch (error) {
+  } catch {
     throw createProjectError(
       "INVALID_JSON",
       "Unable to parse project JSON",
@@ -655,6 +649,9 @@ export function updateProject(project, changes = {}) {
     );
   }
 
+  // Reject unsafe nested values before spreading changes.
+  assertSafeData(changes, "changes");
+
   const allowedChanges = new Set([
     "name",
     "description",
@@ -673,25 +670,6 @@ export function updateProject(project, changes = {}) {
         "IMMUTABLE_OR_UNKNOWN_PROPERTY",
         "Unknown or immutable project property",
         `changes.${String(key)}`
-      );
-    }
-
-    const descriptor = Object.getOwnPropertyDescriptor(
-      changes,
-      key
-    );
-
-    if (
-      !descriptor ||
-      !Object.prototype.hasOwnProperty.call(
-        descriptor,
-        "value"
-      )
-    ) {
-      throw createProjectError(
-        "ACCESSOR_NOT_ALLOWED",
-        "Accessor properties are not allowed",
-        `changes.${key}`
       );
     }
   }
@@ -715,5 +693,5 @@ export function updateProject(project, changes = {}) {
   }
 
   return cloneData(updated);
-    }
-      
+}
+  
